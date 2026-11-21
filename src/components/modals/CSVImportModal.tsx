@@ -12,10 +12,10 @@ interface CSVImportModalProps {
 }
 
 export function CSVImportModal({ isOpen, onClose, onImport }: CSVImportModalProps) {
-  if (!isOpen) return null;
-
   const [csvText, setCsvText] = useState("");
   const [parsedCount, setParsedCount] = useState(0);
+
+  if (!isOpen) return null;
 
   const sampleCSV = `Symbol,Type,Date,Quantity,Price,Notes
 NABIL,BUY,2024-05-10,100,510,Core buy

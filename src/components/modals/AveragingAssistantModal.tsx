@@ -14,10 +14,10 @@ export function AveragingAssistantModal({
   holding,
   onClose,
 }: AveragingAssistantModalProps) {
-  if (!holding) return null;
-
   const [addUnits, setAddUnits] = useState(50);
-  const [purchasePrice, setPurchasePrice] = useState(holding.currentLtp);
+  const [purchasePrice, setPurchasePrice] = useState(holding?.currentLtp ?? 0);
+
+  if (!holding) return null;
 
   const result = simulateAveraging(holding, addUnits, purchasePrice);
 
