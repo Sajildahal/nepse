@@ -1,0 +1,1 @@
+# Keep this directory so the Dockerfile's `COPY /app/public` step succeeds.

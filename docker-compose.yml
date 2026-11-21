@@ -2,32 +2,40 @@ version: '3.8'
 
 services:
   web:
-    build:
-      context: .
-      dockerfile: Dockerfile
+    image: ghcr.io/sajildahal/nepse:latest
+    pull_policy: always
     container_name: nepse-intelligence-web
     restart: unless-stopped
     ports:
       - "3000:3000"
     environment:
       - NODE_ENV=production
-      - DATABASE_URL=postgresql://nepse_user:nepse_secure_pass@postgres:5432/nepse_intelligence?schema=public
+      - DATABASE_URL=postgresql://${POSTGRES_USER:-nepse_user}:${POSTGRES_PASSWORD:-nepse_secure_pass}@postgres:5432/${POSTGRES_DB:-nepse_intelligence}?schema=public
       - REDIS_URL=redis://redis:6379
       - NEXT_PUBLIC_API_URL=http://localhost:3000/api
+    env_file:
+      - path: .env
+        required: false
     depends_on:
       - postgres
       - redis
     networks:
       - nepse-network
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:3000/api/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
 
   postgres:
     image: timescale/timescaledb-ha:pg16
     container_name: nepse-postgres-timescale
     restart: unless-stopped
     environment:
-      POSTGRES_USER: nepse_user
-      POSTGRES_PASSWORD: nepse_secure_pass
-      POSTGRES_DB: nepse_intelligence
+      POSTGRES_USER: ${POSTGRES_USER:-nepse_user}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-nepse_secure_pass}
+      POSTGRES_DB: ${POSTGRES_DB:-nepse_intelligence}
     ports:
       - "5432:5432"
     volumes:
