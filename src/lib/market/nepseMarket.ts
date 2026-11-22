@@ -24,13 +24,29 @@ const USER_AGENT =
 // ---------- WASM module (token index derivation) ----------
 
 let wasmInstance: WebAssembly.Instance | null = null;
-function getWasm(): WebAssembly.Instance {
-  if (wasmInstance) return wasmInstance;
+function getWasmPath(): string {
   const { join } = eval("require('path')") as { join: (...a: string[]) => string };
   const { readFileSync } = eval("require('fs')") as { readFileSync: (p: string) => Buffer };
-  const wasmPath = join(process.cwd(), "src", "lib", "nepse", "css.wasm");
-  const bytes = readFileSync(wasmPath);
-  // WebAssembly.instantiate is async in Node; use sync compile + instantiate
+  const candidates = [
+    join(process.cwd(), "src", "lib", "nepse", "css.wasm"),
+    join(process.cwd(), "css.wasm"),
+    join(process.cwd(), "public", "nepse", "css.wasm"),
+  ];
+  for (const p of candidates) {
+    try {
+      readFileSync(p);
+      return p;
+    } catch {
+      // try next
+    }
+  }
+  throw new Error("css.wasm not found in any candidate path");
+}
+
+function getWasm(): WebAssembly.Instance {
+  if (wasmInstance) return wasmInstance;
+  const { readFileSync } = eval("require('fs')") as { readFileSync: (p: string) => Buffer };
+  const bytes = readFileSync(getWasmPath());
   const wasmModule = new WebAssembly.Module(bytes as any);
   wasmInstance = new WebAssembly.Instance(wasmModule, {});
   return wasmInstance;
