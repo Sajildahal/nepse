@@ -12,9 +12,10 @@ import {
   LayoutGrid,
   Table as TableIcon,
 } from "lucide-react";
-import { INITIAL_MARKET_PRICES, NEPSE_SECTORS } from "@/lib/market/nepseData";
+import { NEPSE_SECTORS } from "@/lib/market/nepseData";
 import { MarketPrice, Sector } from "@/types";
 import { MarketHeatmap } from "@/components/widgets/MarketHeatmap";
+import { useMarketPrices } from "@/hooks/useMarketPrices";
 
 interface LiveMarketViewProps {
   onSelectStock: (symbol: string) => void;
@@ -27,6 +28,8 @@ export function LiveMarketView({ onSelectStock }: LiveMarketViewProps) {
   const [sortField, setSortField] = useState<keyof MarketPrice>("turnover");
   const [sortDirection, setSortDirection] = useState<"asc" | "desc">("desc");
 
+  const { stocks: liveStocks, loading } = useMarketPrices();
+
   const handleSort = (field: keyof MarketPrice) => {
     if (sortField === field) {
       setSortDirection(sortDirection === "asc" ? "desc" : "asc");
@@ -37,7 +40,7 @@ export function LiveMarketView({ onSelectStock }: LiveMarketViewProps) {
   };
 
   const filteredStocks = useMemo(() => {
-    return INITIAL_MARKET_PRICES.filter((stock) => {
+    return liveStocks.filter((stock) => {
       const matchesSearch =
         stock.symbol.toLowerCase().includes(search.toLowerCase()) ||
         stock.name.toLowerCase().includes(search.toLowerCase());
@@ -52,7 +55,7 @@ export function LiveMarketView({ onSelectStock }: LiveMarketViewProps) {
       }
       return 0;
     });
-  }, [search, selectedSector, sortField, sortDirection]);
+  }, [liveStocks, search, selectedSector, sortField, sortDirection]);
 
   return (
     <div className="space-y-5">
@@ -107,8 +110,12 @@ export function LiveMarketView({ onSelectStock }: LiveMarketViewProps) {
         </div>
       </div>
 
-      {viewMode === "heatmap" ? (
-        <MarketHeatmap onSelectStock={onSelectStock} />
+      {loading && liveStocks.length === 0 ? (
+        <div className="rounded-xl border border-slate-800 bg-[#131B2E] p-8 text-center text-slate-400">
+          Loading live market data…
+        </div>
+      ) : viewMode === "heatmap" ? (
+        <MarketHeatmap onSelectStock={onSelectStock} stocks={liveStocks} />
       ) : (
         <>
           {/* Sector Filter Chips */}
@@ -121,10 +128,10 @@ export function LiveMarketView({ onSelectStock }: LiveMarketViewProps) {
                   : "bg-slate-900 border border-slate-800 text-slate-400 hover:text-white"
               }`}
             >
-              All Sectors ({INITIAL_MARKET_PRICES.length})
+              All Sectors ({liveStocks.length})
             </button>
             {NEPSE_SECTORS.map((sector) => {
-              const count = INITIAL_MARKET_PRICES.filter((s) => s.sector === sector).length;
+              const count = liveStocks.filter((s) => s.sector === sector).length;
               if (count === 0) return null;
               return (
                 <button

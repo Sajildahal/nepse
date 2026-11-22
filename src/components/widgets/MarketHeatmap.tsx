@@ -1,22 +1,25 @@
 "use client";
 
 import React, { useState } from "react";
-import { INITIAL_MARKET_PRICES } from "@/lib/market/nepseData";
+import { MarketPrice } from "@/types";
 import { Sector } from "@/types";
 
 interface MarketHeatmapProps {
   onSelectStock: (symbol: string) => void;
+  stocks?: MarketPrice[];
 }
 
-export function MarketHeatmap({ onSelectStock }: MarketHeatmapProps) {
+export function MarketHeatmap({ onSelectStock, stocks = [] }: MarketHeatmapProps) {
   const [metric, setMetric] = useState<"turnover" | "volume">("turnover");
   const [selectedSector, setSelectedSector] = useState<string>("ALL");
 
+  const data = stocks.length ? stocks : [];
+
   const sectors: Sector[] = Array.from(
-    new Set(INITIAL_MARKET_PRICES.map((s) => s.sector))
+    new Set(data.map((s) => s.sector))
   );
 
-  const filtered = INITIAL_MARKET_PRICES.filter(
+  const filtered = data.filter(
     (s) => selectedSector === "ALL" || s.sector === selectedSector
   );
 

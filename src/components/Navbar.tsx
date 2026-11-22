@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState } from "react";
+import React, { useEffect, useState } from "react";
 import {
   Bell,
   Search,
@@ -31,8 +31,48 @@ export function Navbar({
   onToggleTheme,
 }: NavbarProps) {
   const [searchQuery, setSearchQuery] = useState("");
-  const nepseIndex = INITIAL_INDICES[0];
-  const sensitiveIndex = INITIAL_INDICES[1];
+  const [ticker, setTicker] = useState<{
+    marketOpen: boolean | null;
+    nepseIndex: number;
+    sensitiveIndex: number;
+    totalTurnover: number;
+    asOf: string | null;
+  }>({
+    marketOpen: null,
+    nepseIndex: INITIAL_INDICES[0].current,
+    sensitiveIndex: INITIAL_INDICES[1].current,
+    totalTurnover: 0,
+    asOf: null,
+  });
+
+  useEffect(() => {
+    let cancelled = false;
+    const load = async () => {
+      try {
+        const res = await fetch("/api/market/ticker", { cache: "no-store" });
+        if (!res.ok) return;
+        const data = await res.json();
+        if (cancelled) return;
+        const nepse = (data.indices || []).find((i: any) => i.name === "NEPSE Index");
+        const sensitive = (data.indices || []).find((i: any) => i.name === "Sensitive Index");
+        setTicker({
+          marketOpen: Boolean(data.marketOpen),
+          nepseIndex: Number(nepse?.current ?? ticker.nepseIndex),
+          sensitiveIndex: Number(sensitive?.current ?? ticker.sensitiveIndex),
+          totalTurnover: Number(data.totalTurnover ?? 0),
+          asOf: data.asOf ?? null,
+        });
+      } catch {
+        // leave as-is
+      }
+    };
+    load();
+    const id = setInterval(load, 60_000);
+    return () => {
+      cancelled = true;
+      clearInterval(id);
+    };
+  }, []);
 
   return (
     <header className="sticky top-0 z-40 w-full border-b border-slate-800 bg-[#0F172A]/95 backdrop-blur-md">
@@ -40,36 +80,50 @@ export function Navbar({
       <div className="flex h-7 items-center justify-between overflow-x-auto border-b border-slate-850 px-4 text-xs font-mono text-slate-300 bg-[#0B0F19]">
         <div className="flex items-center space-x-6 min-w-max">
           <div className="flex items-center space-x-2">
-            <span className="inline-block h-2 w-2 rounded-full bg-emerald-500 animate-ping"></span>
+            <span
+              className={`inline-block h-2 w-2 rounded-full animate-ping ${
+                ticker.marketOpen === null
+                  ? "bg-slate-500"
+                  : ticker.marketOpen
+                  ? "bg-emerald-500"
+                  : "bg-rose-500"
+              }`}
+            ></span>
             <span className="text-slate-400 font-sans">MARKET STATUS:</span>
-            <span className="font-semibold text-emerald-400">REGULAR SESSION (VERIFIED)</span>
+            <span
+              className={`font-semibold ${
+                ticker.marketOpen === null
+                  ? "text-slate-400"
+                  : ticker.marketOpen
+                  ? "text-emerald-400"
+                  : "text-rose-400"
+              }`}
+            >
+              {ticker.marketOpen === null ? "CHECKING..." : ticker.marketOpen ? "MARKET OPEN" : "MARKET CLOSED"}
+            </span>
           </div>
 
           <div className="flex items-center space-x-2">
             <span className="text-slate-400">NEPSE:</span>
-            <span className="font-bold text-white">{nepseIndex.current.toLocaleString()}</span>
-            <span className="text-emerald-400 font-semibold">
-              +{nepseIndex.change} (+{nepseIndex.changePercent}%)
-            </span>
+            <span className="font-bold text-white">{ticker.nepseIndex.toLocaleString()}</span>
           </div>
 
           <div className="flex items-center space-x-2">
             <span className="text-slate-400">SENSITIVE:</span>
-            <span className="font-bold text-white">{sensitiveIndex.current.toLocaleString()}</span>
-            <span className="text-emerald-400 font-semibold">
-              +{sensitiveIndex.change} (+{sensitiveIndex.changePercent}%)
-            </span>
+            <span className="font-bold text-white">{ticker.sensitiveIndex.toLocaleString()}</span>
           </div>
 
           <div className="flex items-center space-x-2">
             <span className="text-slate-400">TOTAL TURNOVER:</span>
-            <span className="font-bold text-amber-400">NPR 6.84 Arba</span>
+            <span className="font-bold text-amber-400">
+              NPR {(ticker.totalTurnover / 1e9).toFixed(2)} Arba
+            </span>
           </div>
         </div>
 
         <div className="flex items-center space-x-3 text-slate-400 font-sans">
           <Clock className="h-3 w-3 text-slate-500" />
-          <span>AS OF: 02 NOV 2026 15:00 NPT</span>
+          <span>AS OF: {ticker.asOf ? new Date(ticker.asOf).toLocaleString() : "—"}</span>
         </div>
       </div>
 

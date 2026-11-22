@@ -1,9 +1,9 @@
 import { NextResponse } from "next/server";
 import {
   generateHistoricalCandles,
-  INITIAL_MARKET_PRICES,
   NEPSE_COMPANIES,
 } from "@/lib/market/nepseData";
+import { getLiveMarketPrices } from "@/lib/market/nepseMarket";
 import {
   calculateBollingerBands,
   calculateEMA,
@@ -21,7 +21,8 @@ export async function GET(
   const { symbol } = await params;
   const upper = symbol.toUpperCase();
 
-  const stock = INITIAL_MARKET_PRICES.find((s) => s.symbol === upper);
+  const liveStocks = await getLiveMarketPrices();
+  const stock = liveStocks.find((s) => s.symbol === upper);
   if (!stock) {
     return NextResponse.json(
       { error: `Stock symbol ${symbol} not found in NEPSE listings` },
