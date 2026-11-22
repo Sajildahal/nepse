@@ -1,12 +1,12 @@
 import { NextResponse } from "next/server";
-import { INITIAL_MARKET_PRICES } from "@/lib/market/nepseData";
+import { getLiveMarketPrices } from "@/lib/market/nepseMarket";
 
 export async function GET(request: Request) {
   const { searchParams } = new URL(request.url);
   const sector = searchParams.get("sector");
   const search = searchParams.get("search")?.toUpperCase();
 
-  let stocks = [...INITIAL_MARKET_PRICES];
+  let stocks = await getLiveMarketPrices();
 
   if (sector && sector !== "ALL") {
     stocks = stocks.filter((s) => s.sector === sector);
@@ -23,7 +23,7 @@ export async function GET(request: Request) {
   return NextResponse.json({
     count: stocks.length,
     stocks,
-    dataFreshness: "Verified Real-Time / EOD Settlement Snapshot",
+    dataFreshness: "NEPSE Live API",
     timestamp: new Date().toISOString(),
   });
 }
