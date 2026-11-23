@@ -44,26 +44,34 @@ export function Navbar({
     totalTurnover: 0,
     asOf: null,
   });
+  const [statusLoaded, setStatusLoaded] = useState(false);
+  const [statusFailed, setStatusFailed] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
     const load = async () => {
       try {
         const res = await fetch("/api/market/ticker", { cache: "no-store" });
-        if (!res.ok) return;
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
         const data = await res.json();
         if (cancelled) return;
         const nepse = (data.indices || []).find((i: any) => i.name === "NEPSE Index");
         const sensitive = (data.indices || []).find((i: any) => i.name === "Sensitive Index");
-        setTicker({
-          marketOpen: Boolean(data.marketOpen),
-          nepseIndex: Number(nepse?.current ?? ticker.nepseIndex),
-          sensitiveIndex: Number(sensitive?.current ?? ticker.sensitiveIndex),
+        const unavailable = data.status === "UNKNOWN" || data.marketOpen === null;
+        setStatusFailed(unavailable);
+        setStatusLoaded(true);
+        setTicker((prev) => ({
+          marketOpen: unavailable ? null : Boolean(data.marketOpen),
+          nepseIndex: Number(nepse?.current ?? prev.nepseIndex),
+          sensitiveIndex: Number(sensitive?.current ?? prev.sensitiveIndex),
           totalTurnover: Number(data.totalTurnover ?? 0),
           asOf: data.asOf ?? null,
-        });
+        }));
       } catch {
-        // leave as-is
+        if (cancelled) return;
+        setStatusFailed(true);
+        setStatusLoaded(true);
+        setTicker((prev) => ({ ...prev, marketOpen: null }));
       }
     };
     load();
@@ -74,6 +82,16 @@ export function Navbar({
     };
   }, []);
 
+  const statusUnknown = !statusLoaded || statusFailed;
+  const statusDot = statusUnknown ? "bg-slate-500" : ticker.marketOpen ? "bg-emerald-500" : "bg-rose-500";
+  const statusText = statusUnknown
+    ? statusLoaded
+      ? "DATA UNAVAILABLE"
+      : "CHECKING..."
+    : ticker.marketOpen
+    ? "MARKET OPEN"
+    : "MARKET CLOSED";
+
   return (
     <header className="sticky top-0 z-40 w-full border-b border-slate-800 bg-[#0F172A]/95 backdrop-blur-md">
       {/* Top Real-time Ticker Ribbon */}
@@ -81,25 +99,21 @@ export function Navbar({
         <div className="flex items-center space-x-6 min-w-max">
           <div className="flex items-center space-x-2">
             <span
-              className={`inline-block h-2 w-2 rounded-full animate-ping ${
-                ticker.marketOpen === null
-                  ? "bg-slate-500"
-                  : ticker.marketOpen
-                  ? "bg-emerald-500"
-                  : "bg-rose-500"
+              className={`inline-block h-2 w-2 rounded-full ${statusDot} ${
+                statusUnknown ? "" : "animate-ping"
               }`}
             ></span>
             <span className="text-slate-400 font-sans">MARKET STATUS:</span>
             <span
               className={`font-semibold ${
-                ticker.marketOpen === null
+                statusUnknown
                   ? "text-slate-400"
                   : ticker.marketOpen
                   ? "text-emerald-400"
                   : "text-rose-400"
               }`}
             >
-              {ticker.marketOpen === null ? "CHECKING..." : ticker.marketOpen ? "MARKET OPEN" : "MARKET CLOSED"}
+              {statusText}
             </span>
           </div>
 

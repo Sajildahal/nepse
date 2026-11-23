@@ -593,14 +593,16 @@ export async function getMarketOverviewData() {
   };
 }
 export async function getTickerData() {
+  // A failed status lookup must not be reported as "market closed".
+  const unavailable: { open: boolean | null; asOf: string | null } = { open: null, asOf: null };
   const [marketOpen, indices, summary] = await Promise.all([
-    fetchMarketOpen().catch(() => ({ open: false, asOf: null })),
+    fetchMarketOpen().catch(() => unavailable),
     getLiveIndices().catch(() => INITIAL_INDICES),
     fetchMarketSummary().catch(() => ({ totalTurnover: 0, totalTradedShares: 0, totalTransactions: 0, totalScripsTraded: 0, totalMarketCap: 0 })),
   ]);
   return {
     marketOpen: marketOpen.open,
-    status: marketOpen.open ? "OPEN" : "CLOSED",
+    status: marketOpen.open === null ? "UNKNOWN" : marketOpen.open ? "OPEN" : "CLOSED",
     asOf: marketOpen.asOf,
     indices,
     totalTurnover: summary.totalTurnover,

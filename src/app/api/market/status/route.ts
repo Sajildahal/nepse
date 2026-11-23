@@ -12,9 +12,11 @@ export async function GET() {
       timestamp: new Date().toISOString(),
     });
   } catch (err) {
+    // A failed lookup is NOT the same as the market being closed. Report an
+    // explicit unknown state so callers don't render a false "MARKET CLOSED".
     return NextResponse.json(
-      { open: false, status: "CLOSED", asOf: null, error: (err as Error).message },
-      { status: 200 }
+      { open: null, status: "UNKNOWN", asOf: null, error: (err as Error).message },
+      { status: 503 }
     );
   }
 }
