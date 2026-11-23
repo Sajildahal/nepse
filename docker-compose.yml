@@ -14,6 +14,11 @@ services:
     env_file:
       - path: .env
         required: false
+    # Docker's built-in DNS can keep stale upstream resolvers after the host
+    # network changes (e.g. TailScale rewriting /etc/resolv.conf), which breaks
+    # lookups for www.nepalstock.com inside the container. Use the host resolver.
+    dns:
+      - ${DNS_SERVER:-100.100.100.100}
     depends_on:
       postgres:
         condition: service_healthy
