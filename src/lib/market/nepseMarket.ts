@@ -16,6 +16,16 @@ import {
 import type { MarketIndex, MarketPrice, Sector } from "@/types";
 import { cacheGet, cacheSet } from "./redisCache";
 
+const NPT_OFFSET_MS = (5 * 60 + 45) * 60 * 1000;
+
+export function isTradingWindow(): boolean {
+  const npt = new Date(Date.now() + NPT_OFFSET_MS);
+  const day = npt.getUTCDay(); // 0=Sun .. 6=Sat
+  if (day === 0 || day === 6) return false; // Mon-Fri only
+  const minutes = npt.getUTCHours() * 60 + npt.getUTCMinutes();
+  return minutes >= 11 * 60 && minutes < 15 * 60;
+}
+
 const BASE_URL = process.env.NEPSE_BASE_URL || "https://www.nepalstock.com";
 const USER_AGENT =
   process.env.NEPSE_USER_AGENT ||
@@ -184,9 +194,29 @@ let marketOpenCache: { data: MarketOpenStatus; expiresAt: number } | null = null
 export async function fetchLiveMarket(): Promise<NepseLiveQuote[]> {
   const now = Date.now();
   if (liveCache && liveCache.expiresAt > now) return liveCache.data;
-  const data = (await fetchWithAuth("/api/nots/lives-market")) as NepseLiveQuote[];
-  liveCache = { data, expiresAt: now + 15_000 };
-  return data;
+
+  // Outside the trading window, don't hit NEPSE; reuse cached rows if any.
+  if (!isTradingWindow()) {
+    return liveCache?.data ?? [];
+  }
+
+  try {
+    const data = (await fetchWithAuth("/api/nots/lives-market")) as NepseLiveQuote[];
+    const rows = Array.isArray(data) ? data : [];
+    liveCache = { data: rows, expiresAt: now + 15_000 };
+    return rows;
+  } catch (err) {
+    const msg = (err as Error)?.message || "";
+    // NEPSE returns "[]" (empty) when the market is closed; treat as no rows.
+    if (msg.includes("returned empty response")) {
+      const rows: NepseLiveQuote[] = [];
+      liveCache = { data: rows, expiresAt: now + 15_000 };
+      return rows;
+    }
+    console.warn("[nepse] lives-market fetch failed:", msg);
+    if (liveCache?.data) return liveCache.data;
+    return [];
+  }
 }
 
 export async function fetchCompanyList(): Promise<NepseCompany[]> {
@@ -479,6 +509,10 @@ let pricesCache: { data: MarketPrice[]; expiresAt: number } | null = null;
 const REDIS_KEY = "nepse:live:prices";
 const REDIS_TTL = 120; // seconds
 
+let overviewCache: { data: any; expiresAt: number } | null = null;
+const OVERVIEW_REDIS_KEY = "nepse:live:overview";
+const OVERVIEW_REDIS_TTL = 120; // seconds
+
 export async function getLiveMarketPrices(): Promise<MarketPrice[]> {
   const now = Date.now();
   if (pricesCache && pricesCache.expiresAt > now) return pricesCache.data;
@@ -497,8 +531,26 @@ export async function getLiveMarketPrices(): Promise<MarketPrice[]> {
 
   // 2. Fetch from NEPSE
   try {
-    const [quotes, companies, marketOpen] = await Promise.all([
-      fetchLiveMarket(),
+    const quotes = await fetchLiveMarket();
+    // No live rows (market closed / fetch failed): prefer cached, else static.
+    if (!quotes.length) {
+      if (pricesCache?.data?.length) return pricesCache.data;
+      try {
+        const cached = await cacheGet(REDIS_KEY);
+        if (cached) {
+          const parsed = JSON.parse(cached) as MarketPrice[];
+          if (parsed.length) {
+            pricesCache = { data: parsed, expiresAt: now + 15_000 };
+            return parsed;
+          }
+        }
+      } catch {
+        // fall through
+      }
+      return INITIAL_MARKET_PRICES;
+    }
+
+    const [companies, marketOpen] = await Promise.all([
       fetchCompanyList(),
       fetchMarketOpen(),
     ]);
@@ -516,15 +568,31 @@ export async function getLiveMarketPrices(): Promise<MarketPrice[]> {
     return prices;
   } catch (err) {
     console.warn("[nepse] live market fetch failed, using static fallback:", (err as Error).message, (err as any)?.cause);
-    if (pricesCache?.data) return pricesCache.data;
+    if (pricesCache?.data?.length) return pricesCache.data;
+    try {
+      const cached = await cacheGet(REDIS_KEY);
+      if (cached) {
+        const parsed = JSON.parse(cached) as MarketPrice[];
+        if (parsed.length) {
+          pricesCache = { data: parsed, expiresAt: now + 15_000 };
+          return parsed;
+        }
+      }
+    } catch {
+      // fall through
+    }
     return INITIAL_MARKET_PRICES;
   }
 }
 
 export async function refreshLiveMarketCache(): Promise<void> {
   try {
-    const [quotes, companies, marketOpen] = await Promise.all([
-      fetchLiveMarket(),
+    const quotes = await fetchLiveMarket();
+    if (!quotes.length) {
+      console.log("[nepse] live market refresh skipped (no live rows)");
+      return;
+    }
+    const [companies, marketOpen] = await Promise.all([
       fetchCompanyList(),
       fetchMarketOpen(),
     ]);
@@ -549,7 +617,7 @@ export function getMarketStatusString(open: boolean): MarketPrice["status"] {
   return open ? "OPEN" : "CLOSED";
 }
 
-export async function getMarketOverviewData() {
+async function computeMarketOverviewData() {
   const stocks = await getLiveMarketPrices();
   const [marketOpen, indices, summary] = await Promise.all([
     fetchMarketOpen().catch(() => ({ open: false, asOf: null })),
@@ -571,7 +639,7 @@ export async function getMarketOverviewData() {
   const totalVolume = summary.totalTradedShares || stocks.reduce((sum, s) => sum + s.volume, 0);
   const totalTransactions = summary.totalTransactions || stocks.reduce((sum, s) => sum + s.transactions, 0);
 
-  return {
+  const result = {
     indices,
     breadth: {
       advancers,
@@ -591,7 +659,40 @@ export async function getMarketOverviewData() {
     timestamp: new Date().toISOString(),
     marketOpen: marketOpen.open,
   };
+  return result;
 }
+export async function getMarketOverviewData() {
+  const now = Date.now();
+  if (overviewCache && overviewCache.expiresAt > now) return overviewCache.data;
+
+  try {
+    const cached = await cacheGet(OVERVIEW_REDIS_KEY);
+    if (cached) {
+      const parsed = JSON.parse(cached);
+      overviewCache = { data: parsed, expiresAt: now + 15_000 };
+      return parsed;
+    }
+  } catch {
+    // fall through
+  }
+
+  const data = await computeMarketOverviewData();
+  overviewCache = { data, expiresAt: now + 15_000 };
+  await cacheSet(OVERVIEW_REDIS_KEY, JSON.stringify(data), OVERVIEW_REDIS_TTL);
+  return data;
+}
+
+export async function refreshMarketOverviewCache(): Promise<void> {
+  try {
+    const data = await computeMarketOverviewData();
+    overviewCache = { data, expiresAt: Date.now() + 15_000 };
+    await cacheSet(OVERVIEW_REDIS_KEY, JSON.stringify(data), OVERVIEW_REDIS_TTL);
+    console.log("[nepse] refreshed market overview cache");
+  } catch (err) {
+    console.warn("[nepse] market overview refresh failed:", (err as Error)?.message || err);
+  }
+}
+
 export async function getTickerData() {
   // A failed status lookup must not be reported as "market closed".
   const unavailable: { open: boolean | null; asOf: string | null } = { open: null, asOf: null };
