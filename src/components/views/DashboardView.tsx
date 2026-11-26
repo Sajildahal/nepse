@@ -15,6 +15,7 @@ import {
   ChevronRight,
 } from "lucide-react";
 import { INITIAL_INDICES, INITIAL_MARKET_PRICES } from "@/lib/market/nepseData";
+import { useMarketOverview } from "@/hooks/useMarketOverview";
 import { PortfolioSummary, Holding } from "@/types";
 import { TabKey } from "../Sidebar";
 
@@ -31,13 +32,19 @@ export function DashboardView({
   onNavigate,
   onSelectStock,
 }: DashboardViewProps) {
-  const topGainers = [...INITIAL_MARKET_PRICES]
+  const { indices: liveIndices, topGainers: liveGainers, topTurnover: liveTurnover, loading: marketLoading } =
+    useMarketOverview();
+
+  const fallbackGainers = [...INITIAL_MARKET_PRICES]
     .sort((a, b) => b.changePercent - a.changePercent)
     .slice(0, 4);
-
-  const topTurnover = [...INITIAL_MARKET_PRICES]
+  const fallbackTurnover = [...INITIAL_MARKET_PRICES]
     .sort((a, b) => b.turnover - a.turnover)
     .slice(0, 4);
+
+  const indices = (liveIndices && liveIndices.length ? liveIndices : INITIAL_INDICES).slice(0, 5);
+  const topGainers = (liveGainers && liveGainers.length ? liveGainers : fallbackGainers).slice(0, 4);
+  const topTurnover = (liveTurnover && liveTurnover.length ? liveTurnover : fallbackTurnover).slice(0, 4);
 
   return (
     <div className="space-y-6">
@@ -163,7 +170,7 @@ export function DashboardView({
           </div>
 
           <div className="mt-4 space-y-3">
-            {INITIAL_INDICES.slice(0, 5).map((idx) => (
+            {indices.map((idx) => (
               <div
                 key={idx.name}
                 className="flex items-center justify-between rounded-lg bg-slate-900/60 p-3 text-xs"

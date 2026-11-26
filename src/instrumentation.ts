@@ -4,13 +4,7 @@ function nowNpt(): Date {
   return new Date(Date.now() + NPT_OFFSET_MS);
 }
 
-function isTradingWindow(): boolean {
-  const npt = nowNpt();
-  const day = npt.getUTCDay(); // 0=Sun .. 6=Sat
-  if (day === 0 || day === 6) return false; // Mon-Fri only
-  const minutes = npt.getUTCHours() * 60 + npt.getUTCMinutes();
-  return minutes >= 11 * 60 && minutes < 15 * 60;
-}
+// isTradingWindow is imported from nepseMarket at runtime (see tick()).
 
 function msUntilNextMidnightNpt(): number {
   const npt = nowNpt();
@@ -60,12 +54,13 @@ export async function register() {
   if (g.__nepseLiveSchedulerStarted) return;
   g.__nepseLiveSchedulerStarted = true;
 
-  const { refreshLiveMarketCache } = await import("./lib/market/nepseMarket");
+  const { refreshLiveMarketCache, refreshMarketOverviewCache, isTradingWindow } = await import("./lib/market/nepseMarket");
 
   const tick = async () => {
     if (!isTradingWindow()) return;
     try {
       await refreshLiveMarketCache();
+      await refreshMarketOverviewCache();
     } catch (err) {
       console.warn("[nepse] live market refresh failed:", (err as Error)?.message || err);
     }
