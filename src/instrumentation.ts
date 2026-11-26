@@ -1,3 +1,5 @@
+import { logMessage } from "./lib/logging/liveLog";
+
 const NPT_OFFSET_MS = (5 * 60 + 45) * 60 * 1000;
 
 function nowNpt(): Date {
@@ -28,7 +30,9 @@ export async function register() {
       const { syncNepseStocks } = await import("./lib/market/nepseMarket");
       await syncNepseStocks();
     } catch (err) {
-      console.warn("[nepse] startup sync failed:", (err as Error)?.message || err);
+      logMessage("error", "nepse", `Startup scrip sync failed — ${(err as Error)?.message || err}`, {
+        error: (err as Error)?.message || String(err),
+      });
     }
   }
 
@@ -39,9 +43,11 @@ export async function register() {
       try {
         const { syncNepseStocks } = await import("./lib/market/nepseMarket");
         await syncNepseStocks();
-        console.log("[nepse] midnight scrip sync done");
+        logMessage("info", "nepse", "Midnight scrip sync completed successfully");
       } catch (err) {
-        console.warn("[nepse] midnight sync failed:", (err as Error)?.message || err);
+        logMessage("error", "nepse", `Midnight scrip sync failed — ${(err as Error)?.message || err}`, {
+          error: (err as Error)?.message || String(err),
+        });
       }
     };
     setTimeout(() => {
@@ -62,12 +68,14 @@ export async function register() {
       await refreshLiveMarketCache();
       await refreshMarketOverviewCache();
     } catch (err) {
-      console.warn("[nepse] live market refresh failed:", (err as Error)?.message || err);
+      logMessage("error", "nepse", `Scheduled live market refresh failed — ${(err as Error)?.message || err}`, {
+        error: (err as Error)?.message || String(err),
+      });
     }
   };
 
   // warm up if we boot inside the window
   if (isTradingWindow()) tick();
   setInterval(tick, 90_000);
-  console.log("[nepse] live market scheduler started (90s, trading window only)");
+  logMessage("info", "nepse", "Live market scheduler started (90s interval, NPT 11:00–15:00 only)");
 }

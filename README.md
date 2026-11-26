@@ -154,6 +154,26 @@ This starts:
 - **PostgreSQL / TimescaleDB:** `localhost:5432`
 - **Redis Cache:** `localhost:6379`
 
+### Live NEPSE fetch logs
+
+A rolling in-memory log buffer is exposed so you can watch LTP/index fetch activity without shell access:
+
+- **Browser viewer:** `http://localhost:3000/log`
+- **JSON snapshot:** `http://localhost:3000/api/log?limit=100`
+- **Live SSE stream:** `http://localhost:3000/api/log/stream`
+
+Set `LOG_VIEW_TOKEN` in `.env` to require a token. Pass it as `?token=<value>` or the `X-Log-Token` header. The viewer stores the token in your browser session only.
+
+Typical entries:
+
+```text
+[nepse] NEPSE auth token acquired successfully
+[nepse] NEPSE API call succeeded: /api/nots/lives-market (HTTP 200, 1234 bytes)
+[nepse] LTP fetched from NEPSE successfully — 573 live quotes
+[nepse] LTP fetch skipped — outside NPT trading window (11:00–15:00)
+[nepse] LTP fetch from NEPSE failed — fetch failed; using cached/static prices
+```
+
 ---
 
 ## 📜 Regulatory Disclosures & Compliance

@@ -15,6 +15,7 @@ import {
 } from "@/lib/market/nepseData";
 import type { MarketIndex, MarketPrice, Sector } from "@/types";
 import { cacheGet, cacheSet } from "./redisCache";
+import { logMessage, logMessageThrottled } from "../logging/liveLog";
 
 const NPT_OFFSET_MS = (5 * 60 + 45) * 60 * 1000;
 
@@ -88,11 +89,32 @@ async function fetchJson(path: string, token?: string): Promise<any> {
     },
   });
   const text = await res.text();
-  if (!res.ok) throw new Error(`NEPSE ${path} HTTP ${res.status}`);
+  if (!res.ok) {
+    logMessage("warn", "nepse", `NEPSE API call failed: ${path} (HTTP ${res.status})`, {
+      path,
+      status: res.status,
+    });
+    throw new Error(`NEPSE ${path} HTTP ${res.status}`);
+  }
   if (!text || !text.trim() || text.trim() === "[]") {
+    logMessage("warn", "nepse", `NEPSE API returned empty response: ${path}`, { path });
     throw new Error(`NEPSE ${path} returned empty response`);
   }
-  return JSON.parse(text);
+  try {
+    const data = JSON.parse(text);
+    logMessage("info", "nepse", `NEPSE API call succeeded: ${path} (HTTP ${res.status}, ${text.length} bytes)`, {
+      path,
+      status: res.status,
+      bytes: text.length,
+    });
+    return data;
+  } catch (err) {
+    logMessage("error", "nepse", `NEPSE API response was not valid JSON: ${path}`, {
+      path,
+      error: (err as Error).message,
+    });
+    throw err;
+  }
 }
 
 async function getAccessToken(): Promise<string> {
@@ -124,6 +146,7 @@ async function getAccessToken(): Promise<string> {
 
   const ttlMs = 40_000;
   tokenCache = { token, expiresAt: now + ttlMs };
+  logMessage("info", "nepse", "NEPSE auth token acquired successfully", { ttlMs });
   return token;
 }
 
@@ -134,11 +157,17 @@ async function invalidateToken() {
 async function fetchWithAuth<T>(path: string): Promise<T> {
   for (let attempt = 0; attempt < 2; attempt++) {
     if (attempt > 0) await invalidateToken();
-    const token = await getAccessToken();
     try {
+      const token = await getAccessToken();
       return (await fetchJson(path, token)) as T;
     } catch (err) {
-      console.warn(`[nepse] ${path} attempt ${attempt + 1} failed:`, (err as Error).message, (err as any)?.cause);
+      const error = err as Error & { cause?: { code?: string; message?: string } };
+      logMessage("warn", "nepse", `NEPSE request failed (attempt ${attempt + 1}/2): ${path} — ${error.message}`, {
+        path,
+        attempt: attempt + 1,
+        causeCode: error.cause?.code,
+        causeMessage: error.cause?.message,
+      });
       if (attempt === 1) throw err;
     }
   }
@@ -197,6 +226,13 @@ export async function fetchLiveMarket(): Promise<NepseLiveQuote[]> {
 
   // Outside the trading window, don't hit NEPSE; reuse cached rows if any.
   if (!isTradingWindow()) {
+    logMessageThrottled(
+      "ltp-outside-window",
+      60_000,
+      "debug",
+      "nepse",
+      "LTP fetch skipped — outside NPT trading window (11:00–15:00)",
+    );
     return liveCache?.data ?? [];
   }
 
@@ -204,16 +240,25 @@ export async function fetchLiveMarket(): Promise<NepseLiveQuote[]> {
     const data = (await fetchWithAuth("/api/nots/lives-market")) as NepseLiveQuote[];
     const rows = Array.isArray(data) ? data : [];
     liveCache = { data: rows, expiresAt: now + 15_000 };
+    logMessage("info", "nepse", `LTP fetched from NEPSE successfully — ${rows.length} live quotes`, {
+      rows: rows.length,
+    });
     return rows;
   } catch (err) {
-    const msg = (err as Error)?.message || "";
+    const error = err as Error & { cause?: { code?: string; message?: string } };
+    const msg = error?.message || "";
     // NEPSE returns "[]" (empty) when the market is closed; treat as no rows.
     if (msg.includes("returned empty response")) {
       const rows: NepseLiveQuote[] = [];
       liveCache = { data: rows, expiresAt: now + 15_000 };
+      logMessage("info", "nepse", "LTP fetch returned no rows from NEPSE — market closed");
       return rows;
     }
-    console.warn("[nepse] lives-market fetch failed:", msg);
+    logMessage("error", "nepse", `LTP fetch from NEPSE failed — ${msg}; using cached/static prices`, {
+      error: msg,
+      causeCode: error.cause?.code,
+      causeMessage: error.cause?.message,
+    });
     if (liveCache?.data) return liveCache.data;
     return [];
   }
@@ -306,7 +351,10 @@ export async function getLiveIndices(): Promise<MarketIndex[]> {
     const indices = await fetchNepseIndex();
     if (indices.length) return indices;
   } catch (err) {
-    console.warn("[nepse] index fetch failed, using static fallback:", (err as Error).message);
+    logMessage("error", "nepse", `NEPSE index fetch failed — ${(err as Error).message}; using static fallback`, {
+      error: (err as Error).message,
+      causeCode: (err as any)?.cause?.code,
+    });
   }
   return INITIAL_INDICES;
 }
@@ -418,7 +466,10 @@ export async function syncNepseStocks(): Promise<void> {
   }
 
   await loadStockMetaFromDb();
-  console.log(`[nepse] synced ${rows.length} scrips (${seen.size} active)`);
+  logMessage("info", "nepse", `NEPSE scrip sync completed successfully — ${rows.length} scrips (${seen.size} active)`, {
+    rows: rows.length,
+    active: seen.size,
+  });
 }
 
 async function loadStockMetaFromDb(): Promise<void> {
@@ -434,7 +485,9 @@ async function loadStockMetaFromDb(): Promise<void> {
       });
     }
   } catch (err) {
-    console.warn("[nepse] could not load stock meta from DB:", (err as Error).message);
+    logMessage("warn", "nepse", `Could not load stock meta from DB — ${(err as Error).message}`, {
+      error: (err as Error).message,
+    });
   }
 }
 
@@ -567,7 +620,11 @@ export async function getLiveMarketPrices(): Promise<MarketPrice[]> {
     await cacheSet(REDIS_KEY, JSON.stringify(prices), REDIS_TTL);
     return prices;
   } catch (err) {
-    console.warn("[nepse] live market fetch failed, using static fallback:", (err as Error).message, (err as any)?.cause);
+    logMessage("error", "nepse", `Live market fetch failed — ${(err as Error).message}; using static fallback`, {
+      error: (err as Error).message,
+      causeCode: (err as any)?.cause?.code,
+      causeMessage: (err as any)?.cause?.message,
+    });
     if (pricesCache?.data?.length) return pricesCache.data;
     try {
       const cached = await cacheGet(REDIS_KEY);
@@ -589,7 +646,7 @@ export async function refreshLiveMarketCache(): Promise<void> {
   try {
     const quotes = await fetchLiveMarket();
     if (!quotes.length) {
-      console.log("[nepse] live market refresh skipped (no live rows)");
+      logMessage("info", "nepse", "LTP cache refresh skipped — no live rows from NEPSE");
       return;
     }
     const [companies, marketOpen] = await Promise.all([
@@ -607,9 +664,13 @@ export async function refreshLiveMarketCache(): Promise<void> {
     const prices = quotes.map((q) => transformQuote(q, status));
     pricesCache = { data: prices, expiresAt: Date.now() + 15_000 };
     await cacheSet(REDIS_KEY, JSON.stringify(prices), REDIS_TTL);
-    console.log(`[nepse] refreshed live market cache (${prices.length} scrips)`);
+    logMessage("info", "nepse", `LTP cache refreshed from NEPSE successfully — ${prices.length} scrips`, {
+      scrips: prices.length,
+    });
   } catch (err) {
-    console.warn("[nepse] live market refresh failed:", (err as Error).message);
+    logMessage("error", "nepse", `LTP cache refresh failed — ${(err as Error).message}`, {
+      error: (err as Error).message,
+    });
   }
 }
 
@@ -687,9 +748,11 @@ export async function refreshMarketOverviewCache(): Promise<void> {
     const data = await computeMarketOverviewData();
     overviewCache = { data, expiresAt: Date.now() + 15_000 };
     await cacheSet(OVERVIEW_REDIS_KEY, JSON.stringify(data), OVERVIEW_REDIS_TTL);
-    console.log("[nepse] refreshed market overview cache");
+    logMessage("info", "nepse", "Market overview cache refreshed successfully");
   } catch (err) {
-    console.warn("[nepse] market overview refresh failed:", (err as Error)?.message || err);
+    logMessage("error", "nepse", `Market overview refresh failed — ${(err as Error)?.message || err}`, {
+      error: (err as Error)?.message || String(err),
+    });
   }
 }
 
